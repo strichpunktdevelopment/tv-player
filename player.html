@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Strichpunkt TV Player</title>
+<!--
+  YouTube player for the Strichpunkt "Kids Videos" Samsung TV app.
+  YouTube refuses embeds from TV apps (file://, error 153), so the app loads this page in an iframe
+  and drives it with postMessage. No storage or tracking of its own.
+  Tested on the TV (Tizen 4 / Chromium 56): plays, pauses, seeks, continues with the next video.
+  Uses the standard youtube.com player: the youtube-nocookie host failed with error 150 on the TV.
+  Messages from the app:  {cmd:'load', v:'<videoId>'} | {cmd:'play'} | {cmd:'pause'} | {cmd:'seek', by:<seconds>}
+  Messages to the app:    {src:'tvplayer', ev:'ready'|'state'|'time'|'error', ...}
+  Built by Mahmoud Ibrahim — Strichpunkt Development.
+-->
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  #player { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+</style>
+</head>
+<body>
+<div id="player"></div>
+<script>
+  var player = null, pending = null;
+
+  function send(msg) {
+    msg.src = 'tvplayer';
+    parent.postMessage(JSON.stringify(msg), '*');
+  }
+
+  function load(id) {
+    if (!player) { pending = id; return; }
+    player.loadVideoById(id);
+  }
+
+  window.addEventListener('message', function (e) {
+    var m;
+    try { m = typeof e.data === 'string' ? JSON.parse(e.data) : e.data; } catch (x) { return; }
+    if (!m || !m.cmd) return;
+    if (m.cmd === 'load' && /^[\w-]{11}$/.test(m.v)) load(m.v);
+    else if (player && m.cmd === 'play') player.playVideo();
+    else if (player && m.cmd === 'pause') player.pauseVideo();
+    else if (player && m.cmd === 'seek') player.seekTo(Math.max(0, player.getCurrentTime() + (+m.by || 0)), true);
+  });
+
+  window.onYouTubeIframeAPIReady = function () {
+    var first = new URLSearchParams(location.search).get('v');
+    var options = {
+      playerVars: { autoplay: 1, controls: 0, rel: 0, iv_load_policy: 3, modestbranding: 1, playsinline: 1, fs: 0, disablekb: 1 },
+      events: {
+        onReady: function () {
+          send({ ev: 'ready' });
+          if (pending) { load(pending); pending = null; }
+        },
+        onStateChange: function (e) { send({ ev: 'state', s: e.data }); },
+        onError: function (e) { send({ ev: 'error', code: e.data }); }
+      }
+    };
+    if (/^[\w-]{11}$/.test(first || '')) options.videoId = first;  // an undefined videoId throws "Invalid video id"
+    player = new YT.Player('player', options);
+  };
+
+  setInterval(function () {
+    if (player && player.getCurrentTime) send({ ev: 'time', t: player.getCurrentTime(), d: player.getDuration() });
+  }, 1000);
+</script>
+<script src="https://www.youtube.com/iframe_api"></script>
+</body>
+</html>
