@@ -12,6 +12,7 @@
   Tested on the TV (Tizen 4 / Chromium 56): plays, pauses, seeks, continues with the next video.
   Uses the standard youtube.com player: the youtube-nocookie host failed with error 150 on the TV.
   Messages from the app:  {cmd:'load', v:'<videoId>'} | {cmd:'play'} | {cmd:'pause'} | {cmd:'seek', by:<seconds>}
+                          | {cmd:'captions', on:<bool>}  (subtitles are off unless switched on)
   Messages to the app:    {src:'tvplayer', ev:'ready'|'state'|'time'|'error', ...}
   Built by Mahmoud Ibrahim — Strichpunkt Development.
 -->
@@ -23,11 +24,25 @@
 <body>
 <div id="player"></div>
 <script>
-  var player = null, pending = null;
+  var player = null, pending = null, captionsOn = false;
 
   function send(msg) {
     msg.src = 'tvplayer';
     parent.postMessage(JSON.stringify(msg), '*');
+  }
+
+  // YouTube may switch subtitles on by itself (uploader default or auto-translate); keep them as the user chose
+  function applyCaptions() {
+    if (!player || !player.loadModule) return;
+    try {
+      if (captionsOn) {
+        player.loadModule('captions');
+        player.setOption('captions', 'track', { languageCode: 'ar' });
+      } else {
+        player.unloadModule('captions');
+        player.unloadModule('cc');
+      }
+    } catch (e) { /* the video has no subtitles */ }
   }
 
   function load(id) {
@@ -43,18 +58,23 @@
     else if (player && m.cmd === 'play') player.playVideo();
     else if (player && m.cmd === 'pause') player.pauseVideo();
     else if (player && m.cmd === 'seek') player.seekTo(Math.max(0, player.getCurrentTime() + (+m.by || 0)), true);
+    else if (m.cmd === 'captions') { captionsOn = !!m.on; applyCaptions(); }
   });
 
   window.onYouTubeIframeAPIReady = function () {
     var first = new URLSearchParams(location.search).get('v');
     var options = {
-      playerVars: { autoplay: 1, controls: 0, rel: 0, iv_load_policy: 3, modestbranding: 1, playsinline: 1, fs: 0, disablekb: 1 },
+      playerVars: { autoplay: 1, controls: 0, rel: 0, iv_load_policy: 3, modestbranding: 1, playsinline: 1, fs: 0, disablekb: 1,
+                    cc_load_policy: 0, hl: 'ar', cc_lang_pref: 'ar' },
       events: {
         onReady: function () {
           send({ ev: 'ready' });
           if (pending) { load(pending); pending = null; }
         },
-        onStateChange: function (e) { send({ ev: 'state', s: e.data }); },
+        onStateChange: function (e) {
+          if (e.data === 1) applyCaptions();
+          send({ ev: 'state', s: e.data });
+        },
         onError: function (e) { send({ ev: 'error', code: e.data }); }
       }
     };
